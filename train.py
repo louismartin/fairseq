@@ -101,12 +101,14 @@ def main(args, init_distributed=False):
     train_meter.start()
     valid_losses = [None]
     valid_subsets = args.valid_subset.split(',')
+    best_sari = 0
+    n_epoch_since_best = 0
     while lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update:
         # train for one epoch
         train(args, trainer, task, epoch_itr)
 
         if epoch_itr.epoch % args.validate_interval == 0:
-            valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
+            valid_losses = sari_validate(args, trainer, task, epoch_itr, valid_subsets)
 
         # only use first validation loss to update the learning rate
         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
@@ -114,6 +116,15 @@ def main(args, init_distributed=False):
         # save checkpoint
         if epoch_itr.epoch % args.save_interval == 0:
             save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
+        sari = valid_losses[0]
+        if sari > best_sari:
+            best_sari = sari
+            n_epoch_since_best = 0
+        else:
+            n_epoch_since_best += 1
+            if n_epoch_since_best >= 5:
+                print(f'Early stopping because SARI did not improve for {n_epoch_since_best} epochs')
+                break
     train_meter.stop()
     print('| done training in {:.1f} seconds'.format(train_meter.sum))
 
@@ -160,7 +171,7 @@ def train(args, trainer, task, epoch_itr):
 
         num_updates = trainer.get_num_updates()
         if args.save_interval_updates > 0 and num_updates % args.save_interval_updates == 0 and num_updates > 0:
-            valid_losses = validate(args, trainer, task, epoch_itr, [first_valid])
+            valid_losses = sari_validate(args, trainer, task, epoch_itr, [first_valid])
             save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
 
         if num_updates >= max_update:
@@ -255,6 +266,79 @@ def validate(args, trainer, task, epoch_itr, subsets):
 
         valid_losses.append(stats['loss'].avg)
     return valid_losses
+
+
+def sari_validate(args, trainer, task, epoch_itr, subsets):
+    from pathlib import Path
+    from ts.resources.paths import get_data_filepath
+    from ts.evaluation.general import get_lowercase_simplification_scores
+    from ts.preprocessors import load_preprocessors, ComposedPreprocessor
+    from fairseq_cli.interactive import buffered_read, make_batches
+    import tempfile
+    # TODO: Choose parameters for the preprocessors ?
+    preprocessors = load_preprocessors(Path(eval(str(args.data))[0]).parent)
+    composed_preprocessor = ComposedPreprocessor(preprocessors)
+    complex_filepath = get_data_filepath('turkcorpus', 'valid', 'complex')
+    encoded_complex_filepath = tempfile.mkstemp()[1]
+    encoded_pred_filepath = tempfile.mkstemp()[1]
+    pred_filepath = tempfile.mkstemp()[1]
+    composed_preprocessor.encode_file(complex_filepath, encoded_complex_filepath)
+    max_positions = utils.resolve_max_positions(
+        task.max_positions(),
+        trainer.get_model().max_positions(),
+    )
+    parser = options.get_generation_parser(interactive=True)
+    gen_args = options.parse_args_and_arch(parser, input_args=['/dummy_data', '--beam', '12'])
+    # Initialize generator
+    generator = task.build_generator(gen_args)
+    start_id = 0
+    with open(encoded_pred_filepath, 'w') as f:
+        for inputs in buffered_read(encoded_complex_filepath, buffer_size=9999):
+            results = []
+            for batch in make_batches(inputs, args, task, max_positions):
+                src_tokens = batch.src_tokens
+                src_lengths = batch.src_lengths
+                if torch.cuda.is_available() and not args.cpu:
+                    src_tokens = src_tokens.cuda()
+                    src_lengths = src_lengths.cuda()
+
+                sample = {
+                    'net_input': {
+                        'src_tokens': src_tokens,
+                        'src_lengths': src_lengths,
+                    },
+                }
+                translations = task.inference_step(generator, [trainer.model], sample)
+                for i, (id, hypos) in enumerate(zip(batch.ids.tolist(), translations)):
+                    src_tokens_i = utils.strip_pad(src_tokens[i], task.target_dictionary.pad())
+                    results.append((start_id + id, src_tokens_i, hypos))
+
+            # sort output to match input order
+            for id, src_tokens, hypos in sorted(results, key=lambda x: x[0]):
+                if task.source_dictionary is not None:
+                    src_str = task.source_dictionary.string(src_tokens, gen_args.remove_bpe)
+
+                # Process top predictions
+                for hypo in hypos[:min(len(hypos), gen_args.nbest)]:
+                    hypo_tokens, hypo_str, alignment = utils.post_process_prediction(
+                        hypo_tokens=hypo['tokens'].int().cpu(),
+                        src_str=src_str,
+                        alignment=hypo['alignment'].int().cpu() if hypo['alignment'] is not None else None,
+                        align_dict=None,
+                        tgt_dict=task.target_dictionary,
+                        remove_bpe=gen_args.remove_bpe,
+                    )
+                    f.write(f'{hypo_str}\n')
+
+            # update running id counter
+            start_id += len(results)
+    composed_preprocessor.decode_file(encoded_pred_filepath, pred_filepath)
+    ref_filepaths = [get_data_filepath('turkcorpus', 'valid', 'simple.turk', i)
+                     for i in range(8)]
+    scores = get_lowercase_simplification_scores(complex_filepath, pred_filepath, ref_filepaths)
+    print('Encoded and decoded predictions:', encoded_pred_filepath, pred_filepath)
+    print(scores)
+    return [scores['SARI']]
 
 
 def get_valid_stats(trainer):
