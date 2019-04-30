@@ -116,7 +116,7 @@ def main(args, init_distributed=False):
         # save checkpoint
         if epoch_itr.epoch % args.save_interval == 0:
             save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
-        sari = valid_losses[0]
+        sari = -valid_losses[0]
         if sari > best_sari:
             best_sari = sari
             n_epoch_since_best = 0
@@ -288,7 +288,8 @@ def sari_validate(args, trainer, task, epoch_itr, subsets):
         trainer.get_model().max_positions(),
     )
     parser = options.get_generation_parser(interactive=True)
-    gen_args = options.parse_args_and_arch(parser, input_args=['/dummy_data', '--beam', '12'])
+    # TODO: Take args from fairseq_generate
+    gen_args = options.parse_args_and_arch(parser, input_args=['/dummy_data', '--beam', '2'])
     # Initialize generator
     generator = task.build_generator(gen_args)
     start_id = 0
@@ -338,7 +339,7 @@ def sari_validate(args, trainer, task, epoch_itr, subsets):
     scores = get_lowercase_simplification_scores(complex_filepath, pred_filepath, ref_filepaths)
     print('Encoded and decoded predictions:', encoded_pred_filepath, pred_filepath)
     print(scores)
-    return [scores['SARI']]
+    return [-scores['SARI']]
 
 
 def get_valid_stats(trainer):
