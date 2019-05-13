@@ -14,6 +14,7 @@ import itertools
 import os
 import math
 import random
+import shutil
 
 import torch
 
@@ -122,9 +123,14 @@ def main(args, init_distributed=False):
             n_epoch_since_best = 0
         else:
             n_epoch_since_best += 1
-            if n_epoch_since_best >= 5:
+            if n_epoch_since_best >= 10:
                 print(f'Early stopping because SARI did not improve for {n_epoch_since_best} epochs')
                 break
+        if (epoch_itr.epoch >= 2 and best_sari < 19) or (epoch_itr.epoch >= 5 and best_sari < 22) or (epoch_itr.epoch >= 10 and best_sari < 25):
+            print(f'Early stopping because best SARI is too low ({best_sari:.2f}) after {epoch_itr.epoch} epochs.')
+            # Remove the checkpoint directory as we got nothing interesting
+            shutil.rmtree(args.save_dir)
+            break
     train_meter.stop()
     print('| done training in {:.1f} seconds'.format(train_meter.sum))
 

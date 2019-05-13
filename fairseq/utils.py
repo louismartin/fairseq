@@ -158,8 +158,6 @@ def load_ensemble_for_inference(filenames, task, model_arg_overrides=None):
     ensemble = []
     for state in states:
         args = state['args']
-        del args.encoder_embed_path
-        del args.decoder_embed_path
 
         if model_arg_overrides is not None:
             args = override_model_args(args, model_arg_overrides)
