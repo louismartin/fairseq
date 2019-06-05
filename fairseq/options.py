@@ -347,6 +347,8 @@ def add_checkpoint_args(parser):
                        help='only store last and best checkpoints')
     group.add_argument('--validate-interval', type=int, default=1, metavar='N',
                        help='validate every N epochs')
+    group.add_argument('--validations-before-sari-early-stopping', type=float, default=float('inf'),
+                       help='Number of validations before early stopping on SARI')
     # fmt: on
     return group
 

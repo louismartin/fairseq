@@ -14,7 +14,6 @@ import itertools
 import os
 import math
 import random
-import shutil
 
 import torch
 
@@ -102,35 +101,25 @@ def main(args, init_distributed=False):
     train_meter.start()
     valid_losses = [None]
     valid_subsets = args.valid_subset.split(',')
-    best_sari = 0
-    n_epoch_since_best = 0
     while lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update:
         # train for one epoch
         train(args, trainer, task, epoch_itr)
+        if getattr(trainer, 'early_stopping', False):
+            break
 
         if epoch_itr.epoch % args.validate_interval == 0:
             valid_losses = sari_validate(args, trainer, task, epoch_itr, valid_subsets)
+            sari = -valid_losses[0]
+        if getattr(trainer, 'early_stopping', False):
+            break
 
         # only use first validation loss to update the learning rate
         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
 
         # save checkpoint
         if epoch_itr.epoch % args.save_interval == 0:
-            save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
-        sari = -valid_losses[0]
-        if sari > best_sari:
-            best_sari = sari
-            n_epoch_since_best = 0
-        else:
-            n_epoch_since_best += 1
-            if n_epoch_since_best >= 10:
-                print(f'Early stopping because SARI did not improve for {n_epoch_since_best} epochs')
-                break
-        if (epoch_itr.epoch >= 2 and best_sari < 19) or (epoch_itr.epoch >= 5 and best_sari < 22) or (epoch_itr.epoch >= 10 and best_sari < 25):
-            print(f'Early stopping because best SARI is too low ({best_sari:.2f}) after {epoch_itr.epoch} epochs.')
-            # Remove the checkpoint directory as we got nothing interesting
-            shutil.rmtree(args.save_dir)
-            break
+            if sari > 35:
+                save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
     train_meter.stop()
     print('| done training in {:.1f} seconds'.format(train_meter.sum))
 
@@ -139,7 +128,7 @@ def train(args, trainer, task, epoch_itr):
     """Train the model for one epoch."""
     # Update parameters every N batches
     update_freq = args.update_freq[epoch_itr.epoch - 1] \
-            if epoch_itr.epoch <= len(args.update_freq) else args.update_freq[-1]
+            if epoch_itr.epoch <= len(args.update_freq) else args.update_freq[-1]  # noqa: E127
 
     # Initialize data iterator
     itr = epoch_itr.next_epoch_itr(
@@ -178,7 +167,11 @@ def train(args, trainer, task, epoch_itr):
         num_updates = trainer.get_num_updates()
         if args.save_interval_updates > 0 and num_updates % args.save_interval_updates == 0 and num_updates > 0:
             valid_losses = sari_validate(args, trainer, task, epoch_itr, [first_valid])
-            save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
+            sari = -valid_losses[0]
+            if sari > 35:
+                save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
+        if getattr(trainer, 'early_stopping', False):
+            break
 
         if num_updates >= max_update:
             break
@@ -343,9 +336,38 @@ def sari_validate(args, trainer, task, epoch_itr, subsets):
     ref_filepaths = [get_data_filepath('turkcorpus', 'valid', 'simple.turk', i)
                      for i in range(8)]
     scores = get_lowercase_simplification_scores(complex_filepath, pred_filepath, ref_filepaths)
-    print('Encoded and decoded predictions:', encoded_pred_filepath, pred_filepath)
     print(scores)
-    return [-scores['SARI']]
+    sari = scores['SARI']
+    if not hasattr(trainer, 'best_sari'):
+        trainer.best_sari = 0
+    if not hasattr(trainer, 'n_validations_since_best'):
+        trainer.n_validations_since_best = 0
+    if sari > trainer.best_sari:
+        trainer.best_sari = sari
+        trainer.n_validations_since_best = 0
+    else:
+        trainer.n_validations_since_best += 1
+        print(f'SARI did not improve for {trainer.n_validations_since_best} validations')
+        # Does not work because scheduler will set it to previous value everytime
+        #trainer.optimizer.set_lr(0.75 * trainer.optimizer.get_lr())
+        if trainer.n_validations_since_best >= args.validations_before_sari_early_stopping:
+            print(f'Early stopping because SARI did not improve for {trainer.n_validations_since_best} validations')
+            trainer.early_stopping = True
+
+        def is_abort(epoch_itr, best_sari):
+            if (epoch_itr.epoch >= 2 and best_sari < 19):
+                return True
+            if (epoch_itr.epoch >= 5 and best_sari < 22):
+                return True
+            if (epoch_itr.epoch >= 10 and best_sari < 25):
+                return True
+            return False
+        # if is_abort(epoch_itr, best_sari):
+        #     print(f'Early stopping because best SARI is too low ({best_sari:.2f}) after {epoch_itr.epoch} epochs.')
+        #     # Remove the checkpoint directory as we got nothing interesting
+        #     shutil.rmtree(args.save_dir)
+        #     # TODO: Abort
+    return [-sari]
 
 
 def get_valid_stats(trainer):
@@ -378,14 +400,14 @@ def save_checkpoint(args, trainer, epoch_itr, val_loss):
     updates = trainer.get_num_updates()
 
     checkpoint_conds = collections.OrderedDict()
-    checkpoint_conds['checkpoint{}.pt'.format(epoch)] = (
-            end_of_epoch and not args.no_epoch_checkpoints and
-            epoch % args.save_interval == 0
-    )
-    checkpoint_conds['checkpoint_{}_{}.pt'.format(epoch, updates)] = (
-            not end_of_epoch and args.save_interval_updates > 0 and
-            updates % args.save_interval_updates == 0
-    )
+    #checkpoint_conds['checkpoint{}.pt'.format(epoch)] = (
+    #        end_of_epoch and not args.no_epoch_checkpoints and
+    #        epoch % args.save_interval == 0
+    #)
+    #checkpoint_conds['checkpoint_{}_{}.pt'.format(epoch, updates)] = (
+    #        not end_of_epoch and args.save_interval_updates > 0 and
+    #        updates % args.save_interval_updates == 0
+    #)
     checkpoint_conds['checkpoint_best.pt'] = (
             val_loss is not None and
             (not hasattr(save_checkpoint, 'best') or val_loss < save_checkpoint.best)
