@@ -270,8 +270,9 @@ def validate(args, trainer, task, epoch_itr, subsets):
 def sari_validate(args, trainer, task, epoch_itr, subsets):
     from pathlib import Path
     from ts.resources.paths import get_data_filepath
-    from ts.evaluation.general import get_lowercase_simplification_scores
+    from ts.utils.helpers import read_lines
     from ts.preprocessors import load_preprocessors, ComposedPreprocessor
+    from easse.report import get_all_scores
     from fairseq_cli.interactive import buffered_read, make_batches
     import tempfile
     # TODO: Choose parameters for the preprocessors ?
@@ -335,8 +336,9 @@ def sari_validate(args, trainer, task, epoch_itr, subsets):
     composed_preprocessor.decode_file(encoded_pred_filepath, pred_filepath)
     ref_filepaths = [get_data_filepath('turkcorpus', 'valid', 'simple.turk', i)
                      for i in range(8)]
-    scores = get_lowercase_simplification_scores(complex_filepath, pred_filepath, ref_filepaths)
-    print(scores)
+    scores = get_all_scores(read_lines(complex_filepath), read_lines(pred_filepath), [read_lines(ref_filepath) for ref_filepath in ref_filepaths])
+    print(f'num_updates={trainer.get_num_updates()}')
+    print(f'ts_scores={scores}')
     sari = scores['SARI']
     if not hasattr(trainer, 'best_sari'):
         trainer.best_sari = 0
