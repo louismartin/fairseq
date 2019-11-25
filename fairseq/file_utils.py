@@ -64,7 +64,7 @@ def load_archive_file(archive_file):
         )
         return None
 
-    if resolved_archive_file == archive_file:
+    if resolved_archive_file == str(archive_file):
         print("loading archive file {}".format(archive_file))
     else:
         print("loading archive file {} from cache at {}".format(
