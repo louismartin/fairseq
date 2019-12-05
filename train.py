@@ -269,9 +269,9 @@ def validate(args, trainer, task, epoch_itr, subsets):
 
 def sari_validate(args, trainer, task, epoch_itr, subsets):
     from pathlib import Path
-    from ts.resources.paths import get_data_filepath
-    from ts.utils.helpers import read_lines
-    from ts.preprocessors import load_preprocessors, ComposedPreprocessor
+    from access.resources.paths import get_data_filepath
+    from access.utils.helpers import read_lines
+    from access.preprocessors import load_preprocessors, ComposedPreprocessor
     from easse.report import get_all_scores
     from fairseq_cli.interactive import buffered_read, make_batches
     import tempfile
