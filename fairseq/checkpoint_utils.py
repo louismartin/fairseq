@@ -42,7 +42,7 @@ def save_checkpoint(args, trainer, epoch_itr, val_loss):
     updates = trainer.get_num_updates()
 
     checkpoint_conds = collections.OrderedDict()
-    checkpoint_conds["checkpoint{}.pt".format(epoch)] = (
+    checkpoint_conds["checkpoint_{}.pt".format(epoch)] = (
         end_of_epoch
         and not args.no_epoch_checkpoints
         and epoch % args.save_interval == 0
@@ -94,7 +94,7 @@ def save_checkpoint(args, trainer, epoch_itr, val_loss):
 
     if args.keep_last_epochs > 0:
         # remove old epoch checkpoints; checkpoints are sorted in descending order
-        checkpoints = checkpoint_paths(args.save_dir, pattern=r"checkpoint(\d+)\.pt")
+        checkpoints = checkpoint_paths(args.save_dir, pattern=r"checkpoint_?(\d+)\.pt")
         for old_chk in checkpoints[args.keep_last_epochs :]:
             if os.path.lexists(old_chk):
                 os.remove(old_chk)
@@ -209,7 +209,7 @@ def load_model_ensemble_and_task(filenames, arg_overrides=None, task=None, stric
     return ensemble, args, task
 
 
-def checkpoint_paths(path, pattern=r"checkpoint(\d+)\.pt"):
+def checkpoint_paths(path, pattern=r"checkpoint_?(\d+)\.pt"):
     """Retrieves all checkpoints found in `path` directory.
 
     Checkpoints are identified by matching filename to the specified pattern. If
