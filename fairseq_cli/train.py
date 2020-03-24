@@ -197,15 +197,34 @@ def train(args, trainer, task, epoch_itr):
 
 def validate_and_save(args, trainer, task, epoch_itr, valid_subsets):
     num_updates = trainer.get_num_updates()
-    save_during_epoch = args.save_interval_updates > 0 and num_updates > 0 and num_updates % args.save_interval_updates == 0
-    validate_after_epoch = epoch_itr.end_of_epoch() and epoch_itr.epoch % args.validate_interval == 0
-    save_after_epoch = epoch_itr.end_of_epoch() and epoch_itr.epoch % args.save_interval == 0
+    do_save = (
+        (
+            args.save_interval_updates > 0
+            and num_updates > 0
+            and num_updates % args.save_interval_updates == 0
+        )
+        or (
+            epoch_itr.end_of_epoch()
+            and epoch_itr.epoch % args.save_interval == 0
+        )
+    )
+    do_validate = (
+        (
+            do_save  # saving requires validation
+            or (
+                epoch_itr.end_of_epoch()
+                and epoch_itr.epoch % args.validate_interval == 0
+            )
+        )
+        and not args.disable_validation
+    )
+
     # Validate
     valid_losses = [None]
-    if not args.disable_validation and (save_during_epoch or validate_after_epoch):
+    if do_validate:
         valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
     # Save
-    if save_during_epoch or save_after_epoch:
+    if do_save:
         checkpoint_utils.save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
     return valid_losses
 
